@@ -1,5 +1,6 @@
 import io
 import json
+import shlex
 import subprocess
 from types import SimpleNamespace
 
@@ -21,6 +22,9 @@ def test_message_for():
 class Stream:
     def __init__(self, lines):
         self.stdout = io.StringIO("".join(json.dumps(l) + "\n" for l in lines) + "garbage\n")
+
+    def terminate(self):
+        self.terminated = True
 
     def wait(self):
         return 0
@@ -98,3 +102,58 @@ def test_notify_mac_plain_and_clickable():
     argv = calls[0]
     assert argv[0] == "/usr/local/bin/terminal-notifier"
     assert "/u/grove open --tab 3" in argv[argv.index("-execute") + 1]
+    calls.clear()
+    notify_mac("t", "x", 3, "/u/my dir/grove", run=lambda argv, **kw: calls.append(argv),
+               which=lambda name: "/usr/local/bin/terminal-notifier")
+    script = shlex.split(calls[0][calls[0].index("-execute") + 1])[2]
+    assert "'/u/my dir/grove' open --tab 3" in script
+
+
+def test_working_clears_finished_dedupe(tmp_path):
+    w, sent, _ = make(tmp_path, [{"cursor": 0}, ev(1, "finished", ts=1000.0),
+                                 ev(2, "working", ts=1020.0),
+                                 ev(3, "needs-input", ts=1060.0)])
+    w.run_once()
+    assert [t for t, _ in sent] == ["#3 src · fix — finished", "#3 src · fix — needs your input"]
+
+
+def test_failing_notify_does_not_block_stream(tmp_path):
+    w, _, _ = make(tmp_path, [{"cursor": 0}, ev(1, "finished"), ev(2, "needs-input", ts=1500.0)])
+    calls = []
+
+    def bad(title, text, num):
+        calls.append(num)
+        raise OSError("osascript gone")
+
+    w.notify = bad
+    w.run_once()
+    assert calls == [3, 3]
+    assert w.load_cursor() == 2
+
+
+def test_malformed_events_are_skipped(tmp_path):
+    bad_ts = ev(2, "finished")
+    del bad_ts["ts"]
+    bad_num = ev(3, "finished")
+    del bad_num["num"]
+    no_seq = ev(4, "finished")
+    del no_seq["seq"]
+    w, sent, _ = make(tmp_path, [{"cursor": "x"}, bad_ts, bad_num, no_seq, ev(5, "finished")])
+    w.run_once()
+    assert len(sent) == 2  # no_seq still notifies; only its cursor update is skipped
+    assert w.load_cursor() == 5
+    w2, _, _ = make(tmp_path, [{"cursor": 1}, bad_ts])
+    w2.run_once()
+    assert w2.load_cursor() == 2
+
+
+def test_stream_child_terminated_even_on_exception(tmp_path):
+    w, _, _ = make(tmp_path, [{"cursor": 0}])
+    stream = Stream([{"cursor": 0}])
+    w.popen = lambda argv, **kw: stream
+    w.handle = lambda event: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        w.run_once()
+    except RuntimeError:
+        pass
+    assert stream.terminated

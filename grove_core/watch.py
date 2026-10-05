@@ -36,7 +36,7 @@ def notify_mac(title: str, text: str, num: int, launcher: str,
     notifier = which("terminal-notifier")
     if notifier:
         script = ('tell application "iTerm" to create window with default profile command '
-                  + _applescript_string(f"{launcher} open --tab {num}"))
+                  + _applescript_string(f"{shlex.quote(launcher)} open --tab {num}"))
         run([notifier, "-title", title, "-message", text, "-group", f"grove-{num}",
              "-execute", f"osascript -e {shlex.quote(script)}"], check=False)
     else:
@@ -65,30 +65,52 @@ class Watcher:
         self.cursor_file.write_text(str(seq))
 
     def handle(self, event: dict) -> None:
+        try:
+            self._handle(event)
+        except (KeyError, TypeError, ValueError) as exc:
+            print(f"grove watch: skipping malformed event: {exc!r}", file=sys.stderr)
+            try:
+                self.save_cursor(int(event["seq"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+
+    def _handle(self, event: dict) -> None:
         if "cursor" in event:
             self.save_cursor(int(event["cursor"]))
             return
         wid = event.get("window_id", "")
-        if event.get("event") == "finished":
+        kind = event.get("event")
+        if kind == "working":
+            self.last_finished.pop(wid, None)
+        if kind == "finished":
             self.last_finished[wid] = event["ts"]
         recent = event["ts"] - self.last_finished.get(wid, float("-inf")) < DEDUPE_WINDOW
-        if not (event.get("event") == "needs-input" and recent):
+        if not (kind == "needs-input" and recent):
             message = message_for(event, self.clock())
             if message:
-                self.notify(message[0], message[1], event["num"])
+                try:
+                    self.notify(message[0], message[1], event["num"])
+                except Exception as exc:  # a failing notifier must not stall the stream
+                    print(f"grove watch: notify failed: {exc!r}", file=sys.stderr)
         self.save_cursor(int(event["seq"]))
 
     def run_once(self) -> None:
         proc = self.popen(self.backend.stream_argv(self.load_cursor()),
                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
-        for line in proc.stdout:
+        try:
+            for line in proc.stdout:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict):
+                    self.handle(event)
+        finally:
             try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(event, dict):
-                self.handle(event)
-        proc.wait()
+                proc.terminate()
+            except Exception:
+                pass
+            proc.wait()
 
     def run_forever(self, max_rounds: int | None = None) -> None:
         delay, rounds = 1, 0
