@@ -57,3 +57,49 @@ def test_agent_plist():
     assert data["Label"] == "io.github.claude-grove.watch"
     assert data["ProgramArguments"] == ["/u/.local/bin/grove", "watch"]
     assert data["KeepAlive"] is True and data["RunAtLoad"] is True
+
+
+def test_answering_local_returns_to_local_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_CONFIG", str(tmp_path / "c.toml"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    code = setup.run(Config(host="fidelity"), SimpleNamespace(uninstall_hooks=False),
+                     ask=answers("Local", ""), say=lambda s: None, platform="linux")
+    assert code == 0
+    assert load().is_local
+    assert hooks_installed(tmp_path / "claude" / "settings.json")
+
+
+def test_blank_keeps_remote_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_CONFIG", str(tmp_path / "c.toml"))
+    monkeypatch.setenv("GROVE_STATE_DIR", str(tmp_path / "state"))
+    fake = lambda argv, **kw: SimpleNamespace(returncode=255, stdout="", stderr="x")
+    setup.run(Config(host="fidelity"), SimpleNamespace(uninstall_hooks=False),
+              ask=answers("", ""), say=lambda s: None, platform="linux", run_cmd=fake)
+    assert load().host == "fidelity"
+
+
+def test_watch_agent_load_result(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_STATE_DIR", str(tmp_path / "state"))
+    ok = lambda argv, **kw: SimpleNamespace(returncode=0)
+    bad = lambda argv, **kw: SimpleNamespace(returncode=5 if argv[1] == "bootstrap" else 0)
+    assert setup.install_watch_agent("/u/grove", tmp_path, 501, run=ok)[1] == 0
+    assert setup.install_watch_agent("/u/grove", tmp_path, 501, run=bad)[1] == 5
+
+
+def test_setup_reports_agent_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_CONFIG", str(tmp_path / "c.toml"))
+    monkeypatch.setenv("GROVE_STATE_DIR", str(tmp_path / "state"))
+    said = []
+    fake = lambda argv, **kw: SimpleNamespace(returncode=5, stdout="", stderr="")
+    setup.run(Config(host="fidelity"), SimpleNamespace(uninstall_hooks=False),
+              ask=answers("", ""), say=said.append, platform="darwin", home=tmp_path, run_cmd=fake)
+    assert any("Could not load the notifier agent (launchctl exit 5)" in s for s in said)
+    assert not any(s.startswith("Installed the notifier") for s in said)
+
+
+def test_uninstall_without_backup_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    said = []
+    setup.run(Config(), SimpleNamespace(uninstall_hooks=True), ask=answers(), say=said.append,
+              platform="linux")
+    assert said == ["Removed grove's Claude hooks."]

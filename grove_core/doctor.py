@@ -50,10 +50,10 @@ def collect(cfg: Config, which=shutil.which, run=subprocess.run, platform=sys.pl
         backend = backend or RemoteBackend(cfg, state_dir(), run=run)
         try:
             info = backend.request("ping", {})
-            checks.append(Check("remote", True, f"{cfg.host}: grove {info['version']}"))
-            checks.append(_tmux_check("remote tmux", info["tmux"]))
-            checks.append(Check("remote hooks", bool(info["hooks"]), cfg.host,
-                                "" if info["hooks"] else f"on {cfg.host} run: grove setup (blank host)"))
+            checks.append(Check("remote", True, f"{cfg.host}: grove {info.get('version', '?')}"))
+            checks.append(_tmux_check("remote tmux", info.get("tmux", "")))
+            checks.append(Check("remote hooks", bool(info.get("hooks", False)), cfg.host,
+                                "" if info.get("hooks", False) else f"on {cfg.host} run: grove setup (answer \"local\")"))
         except RemoteError as exc:
             checks.append(Check("remote", False, str(exc),
                                 f"check `ssh {cfg.host}` works with your key, and grove is installed there"))

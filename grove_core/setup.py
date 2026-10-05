@@ -26,13 +26,14 @@ def agent_plist(launcher: str, log: str) -> bytes:
     })
 
 
-def install_watch_agent(launcher: str, home: Path, uid: int, run=subprocess.run) -> Path:
+def install_watch_agent(launcher: str, home: Path, uid: int, run=subprocess.run) -> tuple[Path, int]:
+    """Write the plist and load it. Returns (path, launchctl bootstrap exit code)."""
     path = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(agent_plist(launcher, str(state_dir() / "watch.log")))
     run(["launchctl", "bootout", f"gui/{uid}/{AGENT_LABEL}"], capture_output=True)
-    run(["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True)
-    return path
+    proc = run(["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True)
+    return path, proc.returncode
 
 
 def run(cfg: Config, args, ask=input, say=print, now=time.time, platform=sys.platform,
@@ -42,16 +43,21 @@ def run(cfg: Config, args, ask=input, say=print, now=time.time, platform=sys.pla
 
     if args.uninstall_hooks:
         backup = update_settings_file(settings_path(), None, now())
-        say(f"Removed grove's Claude hooks (backup: {backup})")
+        say("Removed grove's Claude hooks" + (f" (backup: {backup})" if backup else "") + ".")
         return 0
 
-    cfg.host = ask(f"Machine that runs the Claude sessions (ssh host; blank = this machine) [{cfg.host}]: ").strip() or cfg.host
+    answer = ask(f'Machine that runs the Claude sessions (ssh host, or "local" for this machine) '
+                 f'[{cfg.host or "local"}]: ').strip()
+    if answer.lower() == "local":
+        cfg.host = ""
+    elif answer:
+        cfg.host = answer
     if cfg.is_local:
         cfg.root = ask(f"Folder that holds your projects [{cfg.root}]: ").strip() or cfg.root
     else:
         cfg.remote_cmd = ask(f"Path of grove on {cfg.host} [{cfg.remote_cmd}]: ").strip() or cfg.remote_cmd
     save(cfg)
-    say(f"Saved configuration.")
+    say("Saved configuration.")
 
     if cfg.is_local:
         try:
@@ -67,10 +73,13 @@ def run(cfg: Config, args, ask=input, say=print, now=time.time, platform=sys.pla
             say(f"{cfg.host}: grove {reply['version']}, {reply['tmux'] or 'tmux missing'}, "
                 f"hooks {'installed' if reply['hooks'] else 'NOT installed — run grove setup there'}.")
         except RemoteError as exc:
-            say(f"{exc}\nInstall grove on {cfg.host} (clone + ./install.sh, blank host), then run grove doctor here.")
+            say(f"{exc}\nInstall grove on {cfg.host} (clone + ./install.sh, answer \"local\"), then run grove doctor here.")
 
     if platform == "darwin" and cfg.notify:
-        path = install_watch_agent(launcher, home or Path.home(), os.getuid(), run=run_cmd)
-        say(f"Installed the notifier login agent ({path}).")
+        path, code = install_watch_agent(launcher, home or Path.home(), os.getuid(), run=run_cmd)
+        if code == 0:
+            say(f"Installed the notifier login agent ({path}).")
+        else:
+            say(f"Could not load the notifier agent (launchctl exit {code}); run grove doctor")
     say("Done. Check everything with: grove doctor")
     return 0

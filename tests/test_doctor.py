@@ -47,3 +47,14 @@ def test_remote_unreachable():
                                   run=lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
                                   platform="linux", backend=Backend()))
     assert not checks["remote"].ok and "timed out" in checks["remote"].detail
+
+
+def test_remote_reply_missing_keys():
+    class Backend:
+        def request(self, op, params):
+            return {}
+
+    checks = names(doctor.collect(Config(host="fidelity"), which=lambda n: None,
+                                  run=lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+                                  platform="linux", backend=Backend()))
+    assert not checks["remote tmux"].ok and not checks["remote hooks"].ok
