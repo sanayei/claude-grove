@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import shlex
+import shutil
 import signal
 import sys
 import time
@@ -52,9 +53,11 @@ def handle_hook(event: str, env: Mapping[str, str], tmux: Tmux, state: Path, now
 
 def _log_error(message: str) -> None:
     try:
-        with open(state_dir() / "grove.log", "a") as f:
+        d = state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "grove.log", "a") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
-    except OSError:
+    except Exception:                              # noqa: BLE001 - logging must never raise
         pass
 
 
@@ -124,20 +127,27 @@ def hooks_installed(path: Path) -> bool:
 
 def update_settings_file(path: Path, launcher: str | None, now: float) -> Path | None:
     """Install (launcher given) or uninstall (None) grove's hooks. Returns the backup path."""
+    real = Path(os.path.realpath(path))
     backup = None
-    if path.exists():
-        text = path.read_text()
+    if real.exists():
+        text = real.read_text()
         try:
             settings = json.loads(text)
         except ValueError as exc:
             raise SettingsError(f"{path} is not valid JSON ({exc}); leaving it untouched") from exc
-        backup = path.with_name(f"{path.name}.grove-backup-{int(now)}")
+        if not isinstance(settings, dict):
+            raise SettingsError(f"{path} is not a JSON object; leaving it untouched")
+        backup = real.with_name(f"{real.name}.grove-backup-{int(now)}")
         backup.write_text(text)
     else:
+        if launcher is None:
+            return None
         settings = {}
     updated = install_hooks(settings, launcher) if launcher else uninstall_hooks(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(updated, indent=2) + "\n")
-    os.replace(tmp, path)
+    real.parent.mkdir(parents=True, exist_ok=True)
+    tmp = real.with_name(real.name + ".tmp")
+    tmp.write_text(json.dumps(updated, indent=2, ensure_ascii=False) + "\n")
+    if real.exists():
+        shutil.copymode(real, tmp)
+    os.replace(tmp, real)
     return backup

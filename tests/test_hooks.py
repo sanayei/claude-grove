@@ -130,3 +130,73 @@ def test_hooks_installed_false_for_missing_or_broken(tmp_path):
 def test_settings_path_honours_claude_config_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     assert hooks.settings_path() == tmp_path / "settings.json"
+
+
+def test_run_hook_bogus_pane_returns_zero_and_does_not_log(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setenv("GROVE_STATE_DIR", str(state))
+    monkeypatch.setenv("TMUX_PANE", "%99999")
+    monkeypatch.setattr("sys.stdin", open("/dev/null"))
+    assert run_hook("Stop") == 0
+    assert not (state / "grove.log").exists()
+
+
+def test_run_hook_logs_traceback_when_handler_raises(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setenv("GROVE_STATE_DIR", str(state))
+    monkeypatch.setattr("sys.stdin", open("/dev/null"))
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(hooks, "handle_hook", boom)
+    assert run_hook("Stop") == 0
+    assert "kaboom" in (state / "grove.log").read_text()
+
+
+def test_run_hook_survives_state_dir_failure(monkeypatch):
+    monkeypatch.setattr("sys.stdin", open("/dev/null"))
+
+    def boom(*a, **k):
+        raise RuntimeError("no home")
+    monkeypatch.setattr(hooks, "state_dir", boom)
+    assert run_hook("Stop") == 0
+
+
+def test_symlinked_settings_stays_symlink(tmp_path):
+    target = tmp_path / "dotfiles" / "settings.json"
+    target.parent.mkdir()
+    target.write_text("{}")
+    link = tmp_path / "settings.json"
+    link.symlink_to(target)
+    update_settings_file(link, LAUNCHER, 1.0)
+    assert link.is_symlink()
+    assert hooks_installed(target)
+
+
+def test_settings_permissions_preserved(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{}")
+    path.chmod(0o600)
+    update_settings_file(path, LAUNCHER, 1.0)
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_non_object_settings_refused_before_backup(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("[]")
+    with pytest.raises(SettingsError):
+        update_settings_file(path, LAUNCHER, 1.0)
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_uninstall_on_missing_file_is_noop(tmp_path):
+    path = tmp_path / "sub" / "settings.json"
+    assert update_settings_file(path, None, 1.0) is None
+    assert not path.exists() and not path.parent.exists()
+
+
+def test_settings_written_without_ascii_escaping(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text('{"name": "é"}', encoding="utf-8")
+    update_settings_file(path, LAUNCHER, 1.0)
+    assert "é" in path.read_text(encoding="utf-8")
