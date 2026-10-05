@@ -29,7 +29,7 @@
 On the **remote** machine (the one that runs Claude):
 
 ```sh
-git clone https://github.com/<owner>/claude-grove && cd claude-grove && ./install.sh
+git clone https://github.com/sanayei/claude-grove && cd claude-grove && ./install.sh
 ```
 
 At the prompts, answer `local` for the machine and give your projects folder (default `~/projects`). Setup installs Claude hooks into `~/.claude/settings.json`. Then check it:
@@ -41,7 +41,7 @@ grove doctor
 On the **Mac**:
 
 ```sh
-git clone https://github.com/<owner>/claude-grove && cd claude-grove && ./install.sh
+git clone https://github.com/sanayei/claude-grove && cd claude-grove && ./install.sh
 ```
 
 Answer the remote's ssh host (an alias from `~/.ssh/config`, or an IP), then the path of grove on the remote if it is not `~/.local/bin/grove`. Setup also installs a login agent for notifications. Then:
