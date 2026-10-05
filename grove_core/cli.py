@@ -142,7 +142,7 @@ def _path(cfg, path: str) -> str:
 def cmd_tree(backend, cfg, args, extra) -> int:
     tree = backend.request("tree", {})
     if args.path:
-        prefix = args.path.rstrip("/")
+        prefix = _path(cfg, args.path).rstrip("/")
         tree["workspaces"] = [w for w in tree["workspaces"]
                               if w["path"] == prefix or w["path"].startswith(prefix + "/")]
     print(render_text(tree, show_empty=args.all))

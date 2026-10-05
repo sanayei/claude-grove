@@ -13,6 +13,7 @@ TREE = {"root": "/r", "host": "h", "now": 100.0, "workspaces": [
     {"path": "publications", "session": "grove/publications", "missing": False, "tabs": [
         {"id": "@13", "num": 13, "dir": "", "label": "y", "kind": "claude", "status": "idle", "since": 40.0}]},
 ]}
+TREE_JSON = json.dumps(TREE)          # pristine copy: cmd_tree filters its reply in place
 
 
 class FakeBackend:
@@ -125,3 +126,19 @@ def test_invalid_config_file(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("GROVE_CONFIG", str(bad))
     assert cli.main(["tree"]) == 1
     assert capsys.readouterr().err.startswith(f"grove: invalid config file {bad}: ")
+
+
+def test_tree_path_is_normalized_locally(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "projects"
+    (root / "trading/src").mkdir(parents=True)
+    backend = FakeBackend({"tree": json.loads(TREE_JSON)})
+    monkeypatch.setattr(cli, "make_backend", lambda cfg: backend)
+    monkeypatch.setattr(cli.config, "load", lambda: Config(root=str(root)))
+    monkeypatch.chdir(root / "trading/src")
+    assert cli.main(["tree", ".."]) == 0
+    out = capsys.readouterr().out
+    assert "#12" in out and "#13" not in out
+    backend.replies["tree"] = json.loads(TREE_JSON)            # cmd_tree filters the reply in place
+    assert cli.main(["tree", str(root / "publications")]) == 0
+    out = capsys.readouterr().out
+    assert "#13" in out and "#12" not in out

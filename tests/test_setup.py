@@ -1,4 +1,7 @@
+import json
 import plistlib
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from grove_core import setup
@@ -48,15 +51,39 @@ def test_remote_setup_on_mac_installs_agent_and_reports_unreachable(tmp_path, mo
     assert load().host == "fidelity" and load().remote_cmd == "~/.local/bin/grove"
     assert any("cannot reach fidelity" in s for s in said)
     plist = tmp_path / "Library/LaunchAgents/io.github.claude-grove.watch.plist"
-    assert plistlib.loads(plist.read_bytes())["ProgramArguments"][1] == "watch"
+    assert plistlib.loads(plist.read_bytes())["ProgramArguments"][1:] == [
+        str(Path(sys.argv[0]).absolute()), "watch"]
     assert any(c[:2] == ["launchctl", "bootstrap"] for c in commands)
 
 
 def test_agent_plist():
-    data = plistlib.loads(setup.agent_plist("/u/.local/bin/grove", "/u/log"))
+    data = plistlib.loads(setup.agent_plist("/u/.local/bin/grove", "/u/log", python="/opt/py/bin/python3"))
     assert data["Label"] == "io.github.claude-grove.watch"
-    assert data["ProgramArguments"] == ["/u/.local/bin/grove", "watch"]
-    assert data["KeepAlive"] is True and data["RunAtLoad"] is True
+    assert data["ProgramArguments"] == ["/opt/py/bin/python3", "/u/.local/bin/grove", "watch"]
+    assert data["KeepAlive"] == {"SuccessfulExit": False} and data["RunAtLoad"] is True
+
+
+def test_agent_plist_defaults_to_current_interpreter():
+    data = plistlib.loads(setup.agent_plist("/u/grove", "/u/log"))
+    assert data["ProgramArguments"][0] == sys.executable
+
+
+def test_install_watch_agent_pins_interpreter(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_STATE_DIR", str(tmp_path / "state"))
+    ok = lambda argv, **kw: SimpleNamespace(returncode=0)
+    path, _ = setup.install_watch_agent("/u/grove", tmp_path, 501, run=ok, python="/py3")
+    assert plistlib.loads(path.read_bytes())["ProgramArguments"] == ["/py3", "/u/grove", "watch"]
+
+
+def test_remote_ping_summary_tolerates_missing_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROVE_CONFIG", str(tmp_path / "c.toml"))
+    monkeypatch.setenv("GROVE_STATE_DIR", str(tmp_path / "state"))
+    said = []
+    fake = lambda argv, **kw: SimpleNamespace(returncode=0, stdout=json.dumps({"ok": {}}), stderr="")
+    code = setup.run(Config(host="fidelity"), SimpleNamespace(uninstall_hooks=False),
+                     ask=answers("", ""), say=said.append, platform="linux", run_cmd=fake)
+    assert code == 0
+    assert "fidelity: grove ?, tmux missing, hooks NOT installed — run grove setup there." in said
 
 
 def test_answering_local_returns_to_local_mode(tmp_path, monkeypatch):

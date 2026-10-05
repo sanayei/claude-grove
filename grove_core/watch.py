@@ -32,11 +32,11 @@ def _applescript_string(s: str) -> str:
 
 
 def notify_mac(title: str, text: str, num: int, launcher: str,
-               run=subprocess.run, which=shutil.which) -> None:
+               run=subprocess.run, which=shutil.which, python: str = sys.executable) -> None:
     notifier = which("terminal-notifier")
     if notifier:
         script = ('tell application "iTerm" to create window with default profile command '
-                  + _applescript_string(f"{shlex.quote(launcher)} open --tab {num}"))
+                  + _applescript_string(f"{shlex.quote(python)} {shlex.quote(launcher)} open --tab {num}"))
         run([notifier, "-title", title, "-message", text, "-group", f"grove-{num}",
              "-execute", f"osascript -e {shlex.quote(script)}"], check=False)
     else:

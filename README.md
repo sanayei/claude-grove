@@ -3,14 +3,17 @@
 `grove` keeps your Claude Code sessions alive in tmux on a remote machine and shows them as one tree, so you can close the laptop, switch Macs, and come back to the same running sessions. Each project folder is a workspace (one tmux session, one iTerm2 window); each Claude session is a tab. Hooks track whether a tab is working, waiting for you, or done, and the Mac pops a notification when it needs you. Stdlib-only Python; no daemon on the remote.
 
 ```
- grove — fidelity:~/projects                    ◆ 1 needs input
- ───────────────────────────────────────────────────────────────
- ▾ trading                                [workspace]
-     #12 root · refactor-api             ● working      2h 14m
-   ▸ #15 src/backtest · speed up         ◆ needs input  12m
- ▸ publications                           [workspace]
- ───────────────────────────────────────────────────────────────
- ↑↓ move  ⏎ open  space fold  n new  r rename  m mark  c close  / search  q quit
+ grove — fidelity:~/projects                                   ◆ 1 needs input
+
+ ▾ publications
+   #20 p2                                         ○ idle         16m
+   ▸ p1
+ ▾ trading
+   #12 root · refactor-api                        ● working      2h 14m
+   #15 src/backtest · speed up                    ◆ needs input  12m
+   #16 root · shell
+
+↑↓ move  ⏎ open  space fold  n new  r rename  m mark  c close  / search  q quit
 ```
 
 ## Requirements
@@ -47,7 +50,7 @@ Answer the remote's ssh host (an alias from `~/.ssh/config`, or an IP), then the
 grove doctor
 ```
 
-`install.sh` links the launcher into `~/.local/bin` (add that to your `PATH` if it says so). If another `grove` command already exists it installs as `cgrove` instead. Re-run `grove setup` any time; blank answers keep the current value.
+`install.sh` links the launcher into `~/.local/bin` (add that to your `PATH` if it says so). If another `grove` command already exists it installs as `cgrove` instead; it never overwrites a file it did not create (if `cgrove` is taken too, it stops and tells you). Re-run `grove setup` any time; blank answers keep the current value.
 
 ## Daily use
 
@@ -73,9 +76,9 @@ Keys in the interactive screen:
 | `↑` `↓` (or `k` `j`) | Move |
 | `⏎` (or `→`) | Open the tab or workspace |
 | `space` (or `←`) | Fold/unfold a workspace |
-| `n` | New tab in the selected workspace |
+| `n` | New tab: pick a folder, then label and claude/shell |
 | `r` | Rename the selected tab |
-| `m` | Mark the selected folder as a workspace |
+| `m` | Mark a folder as a workspace (folder picker) |
 | `c` | Close the selected tab |
 | `/` | Filter by text |
 | `q` | Quit |

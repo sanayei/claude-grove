@@ -14,23 +14,26 @@ from .hooks import SettingsError, settings_path, update_settings_file
 AGENT_LABEL = "io.github.claude-grove.watch"
 
 
-def agent_plist(launcher: str, log: str) -> bytes:
+def agent_plist(launcher: str, log: str, python: str = sys.executable) -> bytes:
     return plistlib.dumps({
         "Label": AGENT_LABEL,
-        "ProgramArguments": [launcher, "watch"],
+        # pin the interpreter setup ran with: launchd's PATH may find an older python3
+        "ProgramArguments": [python, launcher, "watch"],
         "RunAtLoad": True,
-        "KeepAlive": True,
+        # restart after crashes only; `notify = false` makes watch exit 0 and stay stopped
+        "KeepAlive": {"SuccessfulExit": False},
         "StandardOutPath": log,
         "StandardErrorPath": log,
         "EnvironmentVariables": {"PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"},
     })
 
 
-def install_watch_agent(launcher: str, home: Path, uid: int, run=subprocess.run) -> tuple[Path, int]:
+def install_watch_agent(launcher: str, home: Path, uid: int, run=subprocess.run,
+                        python: str = sys.executable) -> tuple[Path, int]:
     """Write the plist and load it. Returns (path, launchctl bootstrap exit code)."""
     path = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(agent_plist(launcher, str(state_dir() / "watch.log")))
+    path.write_bytes(agent_plist(launcher, str(state_dir() / "watch.log"), python))
     run(["launchctl", "bootout", f"gui/{uid}/{AGENT_LABEL}"], capture_output=True)
     proc = run(["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True)
     return path, proc.returncode
@@ -70,8 +73,8 @@ def run(cfg: Config, args, ask=input, say=print, now=time.time, platform=sys.pla
         from .client import RemoteBackend, RemoteError
         try:
             reply = RemoteBackend(cfg, state_dir(), run=run_cmd).request("ping", {})
-            say(f"{cfg.host}: grove {reply['version']}, {reply['tmux'] or 'tmux missing'}, "
-                f"hooks {'installed' if reply['hooks'] else 'NOT installed — run grove setup there'}.")
+            say(f"{cfg.host}: grove {reply.get('version', '?')}, {reply.get('tmux') or 'tmux missing'}, "
+                f"hooks {'installed' if reply.get('hooks', False) else 'NOT installed — run grove setup there'}.")
         except RemoteError as exc:
             say(f"{exc}\nInstall grove on {cfg.host} (clone + ./install.sh, answer \"local\"), then run grove doctor here.")
 

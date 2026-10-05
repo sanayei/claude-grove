@@ -33,3 +33,25 @@ def test_reinstall_keeps_name(tmp_path):
     run_install(tmp_path, ["/usr/bin", "/bin"])
     proc = run_install(tmp_path, [str(tmp_path / ".local/bin"), "/usr/bin", "/bin"])
     assert proc.returncode == 0 and (tmp_path / ".local/bin/grove").is_symlink()
+
+
+def test_foreign_file_in_bin_is_not_clobbered(tmp_path):
+    bin_dir = tmp_path / ".local/bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "grove").write_text("mine\n")
+    proc = run_install(tmp_path, ["/usr/bin", "/bin"])          # ~/.local/bin is not on PATH
+    assert proc.returncode == 0, proc.stderr
+    assert (bin_dir / "grove").read_text() == "mine\n" and not (bin_dir / "grove").is_symlink()
+    assert os.path.realpath(bin_dir / "cgrove") == str(ROOT / "grove")
+
+
+def test_aborts_when_grove_and_cgrove_are_both_foreign(tmp_path):
+    bin_dir = tmp_path / ".local/bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "grove").write_text("mine\n")
+    (bin_dir / "cgrove").symlink_to("/usr/bin/true")
+    proc = run_install(tmp_path, ["/usr/bin", "/bin"])
+    assert proc.returncode == 1
+    assert "cgrove" in proc.stderr and "not overwriting" in proc.stderr
+    assert (bin_dir / "grove").read_text() == "mine\n"
+    assert os.readlink(bin_dir / "cgrove") == "/usr/bin/true"

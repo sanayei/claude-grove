@@ -2,6 +2,7 @@ import io
 import json
 import shlex
 import subprocess
+import sys
 from types import SimpleNamespace
 
 from grove_core.watch import Watcher, message_for, notify_mac
@@ -107,6 +108,18 @@ def test_notify_mac_plain_and_clickable():
                which=lambda name: "/usr/local/bin/terminal-notifier")
     script = shlex.split(calls[0][calls[0].index("-execute") + 1])[2]
     assert "'/u/my dir/grove' open --tab 3" in script
+
+
+def test_notify_click_pins_interpreter():
+    calls = []
+    notify_mac("t", "x", 3, "/u/my dir/grove", run=lambda argv, **kw: calls.append(argv),
+               which=lambda name: "/usr/local/bin/terminal-notifier", python="/opt/my py/python3")
+    script = shlex.split(calls[0][calls[0].index("-execute") + 1])[2]
+    assert "'/opt/my py/python3' '/u/my dir/grove' open --tab 3" in script
+    calls.clear()
+    notify_mac("t", "x", 3, "/u/grove", run=lambda argv, **kw: calls.append(argv),
+               which=lambda name: "/usr/local/bin/terminal-notifier")
+    assert f"{shlex.quote(sys.executable)} /u/grove open --tab 3" in calls[0][calls[0].index("-execute") + 1]
 
 
 def test_working_clears_finished_dedupe(tmp_path):
