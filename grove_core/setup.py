@@ -1,0 +1,76 @@
+"""First-time configuration: config file, Claude hooks, Mac login agent."""
+from __future__ import annotations
+
+import os
+import plistlib
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from .config import Config, save, state_dir
+from .hooks import SettingsError, settings_path, update_settings_file
+
+AGENT_LABEL = "io.github.claude-grove.watch"
+
+
+def agent_plist(launcher: str, log: str) -> bytes:
+    return plistlib.dumps({
+        "Label": AGENT_LABEL,
+        "ProgramArguments": [launcher, "watch"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+        "EnvironmentVariables": {"PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"},
+    })
+
+
+def install_watch_agent(launcher: str, home: Path, uid: int, run=subprocess.run) -> Path:
+    path = home / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(agent_plist(launcher, str(state_dir() / "watch.log")))
+    run(["launchctl", "bootout", f"gui/{uid}/{AGENT_LABEL}"], capture_output=True)
+    run(["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True)
+    return path
+
+
+def run(cfg: Config, args, ask=input, say=print, now=time.time, platform=sys.platform,
+        home: Path | None = None, run_cmd=subprocess.run) -> int:
+    from .cli import launcher_path
+    launcher = launcher_path()
+
+    if args.uninstall_hooks:
+        backup = update_settings_file(settings_path(), None, now())
+        say(f"Removed grove's Claude hooks (backup: {backup})")
+        return 0
+
+    cfg.host = ask(f"Machine that runs the Claude sessions (ssh host; blank = this machine) [{cfg.host}]: ").strip() or cfg.host
+    if cfg.is_local:
+        cfg.root = ask(f"Folder that holds your projects [{cfg.root}]: ").strip() or cfg.root
+    else:
+        cfg.remote_cmd = ask(f"Path of grove on {cfg.host} [{cfg.remote_cmd}]: ").strip() or cfg.remote_cmd
+    save(cfg)
+    say(f"Saved configuration.")
+
+    if cfg.is_local:
+        try:
+            backup = update_settings_file(settings_path(), launcher, now())
+        except SettingsError as exc:
+            say(f"Could not install Claude hooks: {exc}")
+            return 1
+        say("Installed Claude hooks" + (f" (backup: {backup})" if backup else "") + ".")
+    else:
+        from .client import RemoteBackend, RemoteError
+        try:
+            reply = RemoteBackend(cfg, state_dir(), run=run_cmd).request("ping", {})
+            say(f"{cfg.host}: grove {reply['version']}, {reply['tmux'] or 'tmux missing'}, "
+                f"hooks {'installed' if reply['hooks'] else 'NOT installed — run grove setup there'}.")
+        except RemoteError as exc:
+            say(f"{exc}\nInstall grove on {cfg.host} (clone + ./install.sh, blank host), then run grove doctor here.")
+
+    if platform == "darwin" and cfg.notify:
+        path = install_watch_agent(launcher, home or Path.home(), os.getuid(), run=run_cmd)
+        say(f"Installed the notifier login agent ({path}).")
+    say("Done. Check everything with: grove doctor")
+    return 0
