@@ -80,3 +80,20 @@ def test_stream_events_follow_polls(tmp_path):
     remote.stream_events(tmp_path, since=0, follow=True, out=out, sleep=fake_sleep, max_polls=2)
     seqs = [json.loads(line).get("seq") for line in out.getvalue().splitlines()[1:]]
     assert seqs == [1, 2]
+
+
+def test_bad_params_shapes(env):
+    assert "error" in call("ls", [1, 2])
+    assert "error" in call("events", {"since": "x"})
+    assert "error" in call("events", {"since": True})
+
+
+def test_events_broken_pipe_ends_quietly(env):
+    class Dead:
+        def write(self, _):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+    assert remote.remote_main("events", json.dumps({"since": 0, "follow": True}), out=Dead()) == 0

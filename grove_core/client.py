@@ -30,6 +30,8 @@ def parse_reply(code: int, stdout: str, stderr: str, host: str) -> dict:
                           "(run: grove doctor)")
     if "error" in reply:
         raise (NeedsConfirm if reply.get("confirm") else RemoteError)(reply["error"])
+    if "ok" not in reply:
+        raise RemoteError(f"unexpected reply from {host}: {json.dumps(reply)[:200]}")
     return reply["ok"]
 
 
@@ -52,9 +54,11 @@ class RemoteBackend:
         self.run = run
 
     def ssh_argv(self, tty: bool = False) -> list[str]:
+        # non-interactive calls must never read the terminal or prompt for a password
+        mode = ["-t"] if tty else ["-n", "-o", "BatchMode=yes"]
         return ["ssh", "-o", "ControlMaster=auto", "-o", f"ControlPath={self.state}/ssh-%C",
                 "-o", "ControlPersist=10m", "-o", "ConnectTimeout=5",
-                "-o", "ServerAliveInterval=15", *self.cfg.ssh_opts, *(["-t"] if tty else [])]
+                "-o", "ServerAliveInterval=15", *self.cfg.ssh_opts, *mode]
 
     def _remote_command(self, op: str, params: dict) -> str:
         # remote_cmd stays unquoted so the remote shell expands "~"
@@ -63,7 +67,8 @@ class RemoteBackend:
     def request(self, op: str, params: dict) -> dict:
         argv = [*self.ssh_argv(), "--", self.cfg.host, self._remote_command(op, params)]
         try:
-            proc = self.run(argv, capture_output=True, text=True, timeout=60)
+            proc = self.run(argv, capture_output=True, text=True, timeout=60,
+                            stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired as exc:
             raise RemoteError(f"{self.cfg.host} did not answer within 60 s") from exc
         return parse_reply(proc.returncode, proc.stdout, proc.stderr, self.cfg.host)

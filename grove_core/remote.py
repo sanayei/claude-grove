@@ -40,8 +40,16 @@ def stream_events(state: Path, since: int | None, follow: bool, out=sys.stdout,
 def remote_main(op: str, params_json: str, out=sys.stdout) -> int:
     try:
         params = json.loads(params_json)
+        if not isinstance(params, dict):
+            raise ValueError("params must be a JSON object")
         if op == "events":
-            return stream_events(state_dir(), params.get("since"), bool(params.get("follow")), out=out)
+            since = params.get("since")
+            if since is not None and (isinstance(since, bool) or not isinstance(since, int)):
+                raise ValueError("since must be an integer or null")
+            try:
+                return stream_events(state_dir(), since, bool(params.get("follow")), out=out)
+            except BrokenPipeError:
+                return 0
         reply = {"ok": dispatch(make_grove(load()), op, params)}
     except NeedsConfirm as exc:
         reply = {"error": str(exc), "confirm": True}

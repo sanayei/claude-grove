@@ -64,3 +64,29 @@ def test_attach_argv_local_variants():
         ["sh", "-c", "exec tmux attach -t =trading"]
     assert attach_argv(local, None, "trading", "@3", iterm=False, inside_tmux=True) == \
         ["sh", "-c", "tmux select-window -t @3 2>/dev/null; exec tmux switch-client -t =trading"]
+
+
+def test_ssh_argv_batch_only_when_not_tty(tmp_path):
+    backend = RemoteBackend(CFG, tmp_path)
+    plain = backend.ssh_argv()
+    assert "-n" in plain and "BatchMode=yes" in plain and "-t" not in plain
+    assert "-n" in backend.stream_argv(None) and "BatchMode=yes" in backend.stream_argv(None)
+    tty = backend.ssh_argv(tty=True)
+    assert "-t" in tty and "-n" not in tty and "BatchMode=yes" not in tty
+
+
+def test_request_uses_devnull_stdin(tmp_path):
+    import subprocess
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": {}}), stderr="")
+
+    RemoteBackend(CFG, tmp_path, run=fake_run).request("ls", {})
+    assert seen["stdin"] is subprocess.DEVNULL
+
+
+def test_parse_reply_without_ok_or_error():
+    with pytest.raises(RemoteError, match="unexpected reply"):
+        parse_reply(0, json.dumps({"hello": 1}), "", "fidelity")
