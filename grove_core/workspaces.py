@@ -42,10 +42,17 @@ def rel(root: Path, folder: Path) -> str:
     return folder.resolve().relative_to(root.resolve()).as_posix()
 
 
+def _inside(root: Path, folder: Path) -> bool:
+    return root in folder.resolve().parents
+
+
 def list_workspaces(root: Path) -> list[str]:
     root = root.resolve()
     found: list[Path] = []
-    tops = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    # top-level symlinks are skipped: outside root they escape it, inside they duplicate a workspace
+    tops = sorted(p for p in root.iterdir()
+                  if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+                  and _inside(root, p))
     for top in tops:
         found.append(top)
         for dirpath, dirnames, filenames in os.walk(top):
@@ -55,7 +62,7 @@ def list_workspaces(root: Path) -> list[str]:
                 dirnames[:] = []
             else:
                 dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
-            if here != top and MARKER in filenames:
+            if here != top and MARKER in filenames and _inside(root, here):
                 found.append(here)
     return sorted(rel(root, p) for p in found)
 
@@ -77,6 +84,9 @@ def unmark(root: Path, rel_path: str) -> str:
     return rel(root, folder)
 
 
+SESSION_PREFIX = "grove/"
+
+
 def session_name(ws_rel: str) -> str:
-    """tmux forbids '.' and ':' in session names; escape them reversibly."""
-    return ws_rel.replace("%", "%25").replace(".", "%2E").replace(":", "%3A")
+    """'grove/' + the workspace path; tmux forbids '.' and ':' in names, so escape them reversibly."""
+    return SESSION_PREFIX + ws_rel.replace("%", "%25").replace(".", "%2E").replace(":", "%3A")

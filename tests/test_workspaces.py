@@ -66,6 +66,17 @@ def test_mark_and_unmark(root):
 
 
 def test_session_name_escapes_tmux_specials():
-    assert session_name("a.b:c%d/e") == "a%2Eb%3Ac%25d/e"
+    assert session_name("a.b:c%d/e") == "grove/a%2Eb%3Ac%25d/e"
     assert session_name("pubs/v1.2") != session_name("pubs/v1_2")
-    assert session_name("trading") == "trading"
+    assert session_name("trading") == "grove/trading"
+    assert session_name("publications/p1") == "grove/publications/p1"
+
+
+def test_list_workspaces_skips_symlinks_out_of_and_inside_root(root, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "deep").mkdir(parents=True)
+    (elsewhere / "deep/.grove").touch()
+    (root / "ext").symlink_to(elsewhere)
+    (root / "alias").symlink_to(root / "trading")
+    (root / "trading/link-out").symlink_to(elsewhere)
+    assert list_workspaces(root) == ["data", "pub", "publications", "publications/p1", "trading"]

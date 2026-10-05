@@ -29,15 +29,30 @@ def tabs_of(tree, path):
 
 def test_new_tab_creates_session_with_shell_tab(grove):
     reply = grove.new_tab("trading/src", "fix auth")
-    assert reply["session"] == "trading" and reply["warning"] == ""
+    assert reply["session"] == "grove/trading" and reply["warning"] == ""
     tabs = tabs_of(grove.tree(), "trading")
     assert [(t["kind"], t["dir"], t["label"]) for t in tabs] == [("shell", "", "shell"), ("claude", "src", "fix auth")]
     assert grove.tmux.run("display-message", "-p", "-t", reply["window_id"], "#{window_name}").strip() == "src · fix auth"
 
 
+def test_plain_user_session_with_same_name_does_not_interfere(grove, tmp_path):
+    grove.tmux.run("new-session", "-d", "-s", "trading", "-c", str(tmp_path))
+    reply = grove.new_tab("trading/src", kind="shell")
+    assert reply["session"] == "grove/trading"
+    assert [t["kind"] for t in tabs_of(grove.tree(), "trading")] == ["shell", "shell"]
+
+
+def test_foreign_session_with_grove_name_is_refused(grove, tmp_path):
+    grove.tmux.run("new-session", "-d", "-s", "grove/trading", "-c", str(tmp_path))
+    with pytest.raises(OpError, match="exists and is not a grove session"):
+        grove.new_tab("trading/src")
+    with pytest.raises(OpError, match="not a grove session"):
+        grove.resolve(path="trading")
+
+
 def test_new_tab_goes_to_nearest_marked_workspace(grove):
     reply = grove.new_tab("publications/p1/figures")
-    assert reply["session"] == "publications/p1"
+    assert reply["session"] == "grove/publications/p1"
     assert tabs_of(grove.tree(), "publications/p1")[-1]["dir"] == "figures"
 
 
@@ -96,10 +111,10 @@ def test_unknown_tab_number(grove):
 
 
 def test_resolve_by_path_and_number(grove):
-    assert grove.resolve(path="publications/p2") == {"session": "publications", "window_id": None}
-    assert grove.tmux.has_session("publications")
+    assert grove.resolve(path="publications/p2") == {"session": "grove/publications", "window_id": None}
+    assert grove.tmux.has_session("grove/publications")
     wid = grove.new_tab("trading/src")["window_id"]
-    assert grove.resolve(num=int(wid[1:])) == {"session": "trading", "window_id": wid}
+    assert grove.resolve(num=int(wid[1:])) == {"session": "grove/trading", "window_id": wid}
 
 
 def test_mark_invalidates_workspace_cache(grove):
@@ -128,7 +143,7 @@ def test_listdir(grove):
 def test_dispatch(grove):
     assert dispatch(grove, "ls", {"path": "trading"})["dirs"] == ["it's ö", "src"]
     reply = dispatch(grove, "new", {"path": "trading/src", "label": "x", "kind": "shell"})
-    assert reply["session"] == "trading"
+    assert reply["session"] == "grove/trading"
     assert dispatch(grove, "ping", {})["version"] == "0.1.0"
     with pytest.raises(OpError):
         dispatch(grove, "explode", {})

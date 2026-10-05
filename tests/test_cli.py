@@ -8,9 +8,9 @@ from grove_core.config import Config
 from grove_core.ops import NeedsConfirm
 
 TREE = {"root": "/r", "host": "h", "now": 100.0, "workspaces": [
-    {"path": "trading", "session": "trading", "missing": False, "tabs": [
+    {"path": "trading", "session": "grove/trading", "missing": False, "tabs": [
         {"id": "@12", "num": 12, "dir": "", "label": "x", "kind": "claude", "status": "working", "since": 40.0}]},
-    {"path": "publications", "session": "publications", "missing": False, "tabs": [
+    {"path": "publications", "session": "grove/publications", "missing": False, "tabs": [
         {"id": "@13", "num": 13, "dir": "", "label": "y", "kind": "claude", "status": "idle", "since": 40.0}]},
 ]}
 
@@ -29,8 +29,8 @@ class FakeBackend:
 @pytest.fixture
 def fake(monkeypatch):
     backend = FakeBackend({"tree": TREE,
-                           "new": {"session": "trading", "window_id": "@14", "warning": ""},
-                           "resolve": {"session": "trading", "window_id": None}})
+                           "new": {"session": "grove/trading", "window_id": "@14", "warning": ""},
+                           "resolve": {"session": "grove/trading", "window_id": None}})
     monkeypatch.setattr(cli, "make_backend", lambda cfg: backend)
     monkeypatch.setattr(cli.config, "load", lambda: Config(host="h"))
     opened = []
@@ -55,12 +55,12 @@ def test_new_passes_everything_after_double_dash(fake, capsys):
     assert cli.main(["new", "trading/src", "fix auth", "--rc", "--", "--resume", "--model", "x"]) == 0
     assert fake.calls[-1] == ("new", {"path": "trading/src", "label": "fix auth", "kind": "claude",
                                       "claude_args": ["--resume", "--model", "x"], "rc": True})
-    assert fake.opened == [("trading", "@14")]
+    assert fake.opened == [("grove/trading", "@14")]
     assert "created tab #14" in capsys.readouterr().out
 
 
 def test_new_shell_no_open_and_warning(fake, capsys):
-    fake.replies["new"] = {"session": "trading", "window_id": "@15", "warning": "careful"}
+    fake.replies["new"] = {"session": "grove/trading", "window_id": "@15", "warning": "careful"}
     assert cli.main(["new", "trading", "--shell", "--no-open"]) == 0
     assert fake.calls[-1][1]["kind"] == "shell"
     assert fake.opened == []

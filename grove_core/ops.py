@@ -9,7 +9,7 @@ from pathlib import Path
 from . import __version__
 from .render import tab_name
 from .status import LIVE, SHELLS, read_status, reconcile, remove_status, write_status
-from .tmux import Tmux, Window
+from .tmux import Tmux, TmuxError, Window
 from .workspaces import (
     PathError, list_workspaces, mark, nearest_workspace, rel, resolve_in_root,
     session_name, unmark,
@@ -86,7 +86,14 @@ class Grove:
     # ---- sessions and tabs ------------------------------------------------
     def ensure_session(self, ws_rel: str) -> str:
         name = session_name(ws_rel)
-        if not self.tmux.has_session(name):
+        if self.tmux.has_session(name):
+            try:
+                owner = self.tmux.run("show-options", "-t", f"={name}:", "-v", "@grove_ws").strip()
+            except TmuxError:
+                owner = ""
+            if owner != ws_rel:
+                raise OpError(f"tmux session {name} exists and is not a grove session")
+        else:
             wid = self.tmux.new_session(name, ws_rel, self.root / ws_rel)
             self.tmux.set_window(wid, kind="shell", dir="", label="shell")
             self.tmux.set_title(wid, tab_name("", "shell"))
