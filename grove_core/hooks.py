@@ -5,8 +5,8 @@ import copy
 import json
 import os
 import shlex
-import shutil
 import signal
+import stat
 import sys
 import time
 import traceback
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import state_dir
 from .render import tab_name
-from .status import append_event, write_status
+from .status import append_event, read_status, write_status
 from .tmux import Tmux
 
 EVENT_STATUS = {
@@ -24,7 +24,10 @@ EVENT_STATUS = {
     "Notification": "needs-input",
     "Stop": "idle",
     "SessionEnd": "exited",
+    "PostToolUse": "working",          # only when it follows needs-input (see handle_hook)
 }
+# Notification also fires for idle prompts and auth success; only real input requests count.
+MATCHERS = {"Notification": "permission_prompt|elicitation_dialog"}
 EVENT_NAME = {"Stop": "finished"}          # otherwise the event name is the status
 TAG = "# grove-hook"
 HOOK_TIMEOUT_S = 1
@@ -42,6 +45,10 @@ def handle_hook(event: str, env: Mapping[str, str], tmux: Tmux, state: Path, now
     if win is None or win.kind != "claude":
         return False
     status = EVENT_STATUS[event]
+    if event == "PostToolUse":         # fires after every tool: only clear a pending input request
+        current = read_status(state, win.id)
+        if current is None or current.status != "needs-input":
+            return False
     write_status(state, win.id, status, event, now)
     append_event(state, {
         "ts": now, "window_id": win.id, "num": win.num, "workspace": win.ws,
@@ -92,8 +99,10 @@ def install_hooks(settings: dict, launcher: str) -> dict:
     all_hooks = result.setdefault("hooks", {})
     for event in EVENT_STATUS:
         groups = [g for g in all_hooks.get(event, []) if not _is_grove_group(g)]
-        groups.append({"hooks": [{"type": "command", "command": hook_command(launcher, event),
-                                  "timeout": HOOK_TIMEOUT_S}]})
+        group = {"matcher": MATCHERS[event]} if event in MATCHERS else {}
+        group["hooks"] = [{"type": "command", "command": hook_command(launcher, event),
+                           "timeout": HOOK_TIMEOUT_S}]
+        groups.append(group)
         all_hooks[event] = groups
     return result
 
@@ -119,18 +128,28 @@ def settings_path() -> Path:
 
 def hooks_installed(path: Path) -> bool:
     try:
-        all_hooks = json.loads(path.read_text()).get("hooks", {})
+        all_hooks = json.loads(path.read_text(encoding="utf-8")).get("hooks", {})
     except (OSError, ValueError, AttributeError):
         return False
     return all(any(_is_grove_group(g) for g in all_hooks.get(e, [])) for e in EVENT_STATUS)
+
+
+def _write_with_mode(path: Path, text: str, mode: int) -> None:
+    """Write text to path; the file never has looser permissions than `mode`."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(fd, mode)
+        f.write(text)
 
 
 def update_settings_file(path: Path, launcher: str | None, now: float) -> Path | None:
     """Install (launcher given) or uninstall (None) grove's hooks. Returns the backup path."""
     real = Path(os.path.realpath(path))
     backup = None
+    mode = 0o600
     if real.exists():
-        text = real.read_text()
+        mode = stat.S_IMODE(real.stat().st_mode)
+        text = real.read_text(encoding="utf-8")
         try:
             settings = json.loads(text)
         except ValueError as exc:
@@ -138,7 +157,7 @@ def update_settings_file(path: Path, launcher: str | None, now: float) -> Path |
         if not isinstance(settings, dict):
             raise SettingsError(f"{path} is not a JSON object; leaving it untouched")
         backup = real.with_name(f"{real.name}.grove-backup-{int(now)}")
-        backup.write_text(text)
+        _write_with_mode(backup, text, mode)
     else:
         if launcher is None:
             return None
@@ -146,8 +165,6 @@ def update_settings_file(path: Path, launcher: str | None, now: float) -> Path |
     updated = install_hooks(settings, launcher) if launcher else uninstall_hooks(settings)
     real.parent.mkdir(parents=True, exist_ok=True)
     tmp = real.with_name(real.name + ".tmp")
-    tmp.write_text(json.dumps(updated, indent=2, ensure_ascii=False) + "\n")
-    if real.exists():
-        shutil.copymode(real, tmp)
+    _write_with_mode(tmp, json.dumps(updated, indent=2, ensure_ascii=False) + "\n", mode)
     os.replace(tmp, real)
     return backup

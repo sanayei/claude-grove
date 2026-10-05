@@ -12,6 +12,7 @@ from .tmux import Window
 SHELLS = {"bash", "zsh", "sh", "dash", "fish", "ksh", "tcsh", "-bash", "-zsh", "-sh"}
 LIVE = {"working", "needs-input"}
 MAX_EVENTS_BYTES = 1_000_000
+CREATED_GRACE_S = 15      # a new tab's pane is still a shell until claude starts
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,8 @@ def reconcile(windows: list[Window], state: Path, now: float) -> dict[str, Statu
         if w.kind != "claude":
             continue
         st = read_status(state, w.id) or Status("idle", now, "")
-        if w.command in SHELLS and st.status != "exited":
+        starting = st.event == "created" and now - st.since < CREATED_GRACE_S
+        if w.command in SHELLS and st.status != "exited" and not starting:
             st = Status("exited", now, "reconciled")
             write_status(state, w.id, st.status, st.event, now)
         result[w.id] = st

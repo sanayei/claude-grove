@@ -86,3 +86,15 @@ def test_concurrent_appends_get_unique_sequence_numbers(tmp_path):
         p.join()
     seqs = [json.loads(line)["seq"] for line in (tmp_path / "events.log").read_text().splitlines()]
     assert sorted(seqs) == list(range(1, 101))
+
+
+def test_reconcile_does_not_flash_exited_right_after_creation(tmp_path):
+    write_status(tmp_path, "@1", "idle", "created", 100.0)
+    assert reconcile([win("@1", command="bash")], tmp_path, 110.0)["@1"].status == "idle"
+    assert read_status(tmp_path, "@1").event == "created"
+    assert reconcile([win("@1", command="bash")], tmp_path, 116.0)["@1"] == Status("exited", 116.0, "reconciled")
+
+
+def test_reconcile_grace_only_for_created(tmp_path):
+    write_status(tmp_path, "@1", "idle", "SessionStart", 100.0)
+    assert reconcile([win("@1", command="bash")], tmp_path, 101.0)["@1"].status == "exited"

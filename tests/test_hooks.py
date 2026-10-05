@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -200,3 +201,89 @@ def test_settings_written_without_ascii_escaping(tmp_path):
     path.write_text('{"name": "é"}', encoding="utf-8")
     update_settings_file(path, LAUNCHER, 1.0)
     assert "é" in path.read_text(encoding="utf-8")
+
+
+def test_notification_hook_only_for_real_input_requests():
+    installed = install_hooks({}, LAUNCHER)
+    (group,) = installed["hooks"]["Notification"]
+    assert group["matcher"] == "permission_prompt|elicitation_dialog"
+    (post,) = installed["hooks"]["PostToolUse"]
+    assert "matcher" not in post
+    assert post["hooks"][0]["command"] == hook_command(LAUNCHER, "PostToolUse")
+
+
+def test_post_tool_use_clears_needs_input(tmux, tmp_path, claude_tab):
+    state = tmp_path / "s"
+    pane = {"TMUX_PANE": pane_of(tmux, claude_tab)}
+    handle_hook("Notification", pane, tmux, state, 1.0)
+    assert handle_hook("PostToolUse", pane, tmux, state, 2.0) is True
+    assert read_status(state, claude_tab).status == "working"
+    assert [e["event"] for e in read_events(state, 0)] == ["needs-input", "working"]
+
+
+@pytest.mark.parametrize("before", ["UserPromptSubmit", "Stop"])
+def test_post_tool_use_is_silent_otherwise(tmux, tmp_path, claude_tab, before):
+    state = tmp_path / "s"
+    pane = {"TMUX_PANE": pane_of(tmux, claude_tab)}
+    handle_hook(before, pane, tmux, state, 1.0)
+    status = read_status(state, claude_tab)
+    assert handle_hook("PostToolUse", pane, tmux, state, 2.0) is False
+    assert read_status(state, claude_tab) == status
+    assert len(read_events(state, 0)) == 1
+
+
+def test_post_tool_use_without_status_does_nothing(tmux, tmp_path, claude_tab):
+    state = tmp_path / "s"
+    assert handle_hook("PostToolUse", {"TMUX_PANE": pane_of(tmux, claude_tab)}, tmux, state, 1.0) is False
+    assert read_status(state, claude_tab) is None and read_events(state, 0) == []
+
+
+def test_hooks_installed_requires_post_tool_use(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = install_hooks({}, LAUNCHER)
+    del settings["hooks"]["PostToolUse"]
+    path.write_text(json.dumps(settings))
+    assert not hooks_installed(path)
+    assert "PostToolUse" not in uninstall_hooks(install_hooks({}, LAUNCHER)).get("hooks", {})
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o640])
+def test_backup_and_new_file_keep_source_mode(tmp_path, mode):
+    path = tmp_path / "settings.json"
+    path.write_text("{}")
+    path.chmod(mode)
+    backup = update_settings_file(path, LAUNCHER, 3.0)
+    assert backup.stat().st_mode & 0o777 == mode
+    assert path.stat().st_mode & 0o777 == mode
+
+
+def test_new_settings_file_is_private(tmp_path):
+    path = tmp_path / "settings.json"
+    update_settings_file(path, LAUNCHER, 1.0)
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_tmp_file_never_world_readable(tmp_path, monkeypatch):
+    path = tmp_path / "settings.json"
+    path.write_text("{}")
+    path.chmod(0o600)
+    seen = {}
+    real_replace = hooks.os.replace
+
+    def spy(src, dst):
+        seen["mode"] = os.stat(src).st_mode & 0o777
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(hooks.os, "replace", spy)
+    update_settings_file(path, LAUNCHER, 1.0)
+    assert seen["mode"] == 0o600
+
+
+def test_non_ascii_settings_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    original = {"name": "é 日本 ✓", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say 完了"}]}]}}
+    path.write_text(json.dumps(original, ensure_ascii=False), encoding="utf-8")
+    update_settings_file(path, LAUNCHER, 1.0)
+    backup = update_settings_file(path, None, 2.0)
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+    assert "日本" in backup.read_text(encoding="utf-8")
