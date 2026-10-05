@@ -7,7 +7,9 @@ import subprocess
 from pathlib import Path
 
 from .config import Config
-from .ops import Grove, NeedsConfirm, dispatch
+from .ops import Grove, NeedsConfirm, OpError, dispatch
+from .tmux import TmuxError
+from .workspaces import PathError
 
 
 class RemoteError(RuntimeError):
@@ -25,7 +27,10 @@ def parse_reply(code: int, stdout: str, stderr: str, host: str) -> dict:
     except ValueError:
         reply = None
     if not isinstance(reply, dict):
-        shown = (stderr.strip() or stdout.strip() or "no output")[:200]
+        # a crash prints a traceback: its last line says what went wrong
+        said = [l.strip() for l in stderr.splitlines() if l.strip()] \
+            or [l.strip() for l in stdout.splitlines() if l.strip()]
+        shown = said[-1][:200] if said else "no output"
         raise RemoteError(f"unexpected reply from {host}: {shown} — is grove installed there? "
                           "(run: grove doctor)")
     if "error" in reply:
@@ -41,7 +46,13 @@ class LocalBackend:
         self.launcher = launcher
 
     def request(self, op: str, params: dict) -> dict:
-        return dispatch(self.grove, op, params)
+        # same error contract as RemoteBackend (remote_main): everything but NeedsConfirm -> RemoteError
+        try:
+            return dispatch(self.grove, op, params)
+        except NeedsConfirm:
+            raise
+        except (OpError, PathError, TmuxError, ValueError, KeyError, OSError) as exc:
+            raise RemoteError(str(exc) or exc.__class__.__name__) from exc
 
     def stream_argv(self, since: int | None) -> list[str]:
         return [self.launcher, "--remote", "events", json.dumps({"since": since, "follow": True})]
@@ -58,7 +69,7 @@ class RemoteBackend:
         mode = ["-t"] if tty else ["-n", "-o", "BatchMode=yes"]
         return ["ssh", "-o", "ControlMaster=auto", "-o", f"ControlPath={self.state}/ssh-%C",
                 "-o", "ControlPersist=10m", "-o", "ConnectTimeout=5",
-                "-o", "ServerAliveInterval=15", *self.cfg.ssh_opts, *mode]
+                "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2", *self.cfg.ssh_opts, *mode]
 
     def _remote_command(self, op: str, params: dict) -> str:
         # remote_cmd stays unquoted so the remote shell expands "~"

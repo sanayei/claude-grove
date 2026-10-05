@@ -157,3 +157,13 @@ def test_stream_child_terminated_even_on_exception(tmp_path):
     except RuntimeError:
         pass
     assert stream.terminated
+
+
+def test_heartbeats_are_ignored(tmp_path):
+    w, sent, _ = make(tmp_path, [{"cursor": 4}, {"heartbeat": 1.0}, ev(5, "finished"), {"heartbeat": 2.0}])
+    w.run_once()
+    assert sent == [("#3 src · fix — finished", 3)]
+    assert w.load_cursor() == 5
+    w2, sent2, _ = make(tmp_path, [{"cursor": 7}, {"heartbeat": 3.0}])
+    w2.run_once()
+    assert sent2 == [] and w2.load_cursor() == 7

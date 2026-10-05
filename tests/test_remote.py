@@ -97,3 +97,26 @@ def test_events_broken_pipe_ends_quietly(env):
             raise BrokenPipeError
 
     assert remote.remote_main("events", json.dumps({"since": 0, "follow": True}), out=Dead()) == 0
+
+
+def test_stream_events_heartbeat_when_quiet(tmp_path):
+    out, now = io.StringIO(), [0.0]
+
+    def fake_sleep(s):
+        now[0] += s
+        if now[0] == 40:
+            append_event(tmp_path, {"n": 1})
+
+    remote.stream_events(tmp_path, since=0, follow=True, out=out, sleep=fake_sleep,
+                         max_polls=75, clock=lambda: now[0])
+    lines = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert lines[0] == {"cursor": 0}
+    assert [next(iter(l)) if "seq" not in l else "event" for l in lines[1:]] == \
+        ["heartbeat", "event", "heartbeat"]
+    assert lines[1] == {"heartbeat": 30.0} and lines[3] == {"heartbeat": 70.0}
+
+
+def test_stream_events_no_heartbeat_without_follow(tmp_path):
+    out = io.StringIO()
+    remote.stream_events(tmp_path, since=0, follow=False, out=out, clock=lambda: 1e9)
+    assert out.getvalue().splitlines() == ['{"cursor": 0}']

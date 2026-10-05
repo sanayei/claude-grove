@@ -4,9 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from grove_core.client import RemoteBackend, RemoteError, attach_argv, parse_reply
+from grove_core import client
+from grove_core.client import LocalBackend, RemoteBackend, RemoteError, attach_argv, parse_reply
 from grove_core.config import Config
-from grove_core.ops import NeedsConfirm
+from grove_core.ops import NeedsConfirm, OpError
+from grove_core.tmux import TmuxError
+from grove_core.workspaces import PathError
 
 CFG = Config(host="fidelity", ssh_opts=["-p", "2222"])
 
@@ -71,7 +74,9 @@ def test_ssh_argv_batch_only_when_not_tty(tmp_path):
     plain = backend.ssh_argv()
     assert "-n" in plain and "BatchMode=yes" in plain and "-t" not in plain
     assert "-n" in backend.stream_argv(None) and "BatchMode=yes" in backend.stream_argv(None)
+    assert "ServerAliveInterval=10" in plain and "ServerAliveCountMax=2" in plain
     tty = backend.ssh_argv(tty=True)
+    assert "ServerAliveInterval=10" in tty and "ServerAliveCountMax=2" in tty
     assert "-t" in tty and "-n" not in tty and "BatchMode=yes" not in tty
 
 
@@ -90,3 +95,33 @@ def test_request_uses_devnull_stdin(tmp_path):
 def test_parse_reply_without_ok_or_error():
     with pytest.raises(RemoteError, match="unexpected reply"):
         parse_reply(0, json.dumps({"hello": 1}), "", "fidelity")
+
+
+def test_parse_reply_shows_last_stderr_line_on_crash():
+    trace = "Traceback (most recent call last):\n  File \"x\", line 1\nZeroDivisionError: division by zero\n\n"
+    with pytest.raises(RemoteError, match="ZeroDivisionError: division by zero") as info:
+        parse_reply(1, "", trace, "fidelity")
+    assert "Traceback" not in str(info.value)
+    with pytest.raises(RemoteError, match="unexpected reply from fidelity: last words —"):
+        parse_reply(1, "banner\nlast words\n\n", "", "fidelity")
+    with pytest.raises(RemoteError, match="no output"):
+        parse_reply(1, "", "  \n", "fidelity")
+
+
+@pytest.mark.parametrize("exc", [OpError("op"), PathError("path"), TmuxError("tmux"),
+                                 ValueError("value"), KeyError("key"), OSError("os")])
+def test_local_backend_converts_errors(monkeypatch, exc):
+    def boom(g, op, params):
+        raise exc
+    monkeypatch.setattr(client, "dispatch", boom)
+    with pytest.raises(RemoteError) as info:
+        LocalBackend(None, "/u/grove").request("tree", {})
+    assert str(exc.args[0]) in str(info.value)
+
+
+def test_local_backend_keeps_needs_confirm(monkeypatch):
+    def boom(g, op, params):
+        raise NeedsConfirm("tab #3 is working")
+    monkeypatch.setattr(client, "dispatch", boom)
+    with pytest.raises(NeedsConfirm, match="is working"):
+        LocalBackend(None, "/u/grove").request("close", {"num": 3})

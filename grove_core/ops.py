@@ -100,7 +100,8 @@ class Grove:
         return name
 
     def claude_command(self, args: list[str], rc: bool) -> list[str]:
-        return [*self.claude_cmd, *(["--remote-control"] if rc else []), *args]
+        # --remote-control takes an optional value, so it must come last
+        return [*self.claude_cmd, *args, *(["--remote-control"] if rc else [])]
 
     def _window(self, num: int) -> Window:
         for w in self.tmux.windows():

@@ -75,6 +75,8 @@ class Watcher:
                 pass
 
     def _handle(self, event: dict) -> None:
+        if "heartbeat" in event:                  # keep-alive from the remote: no cursor change
+            return
         if "cursor" in event:
             self.save_cursor(int(event["cursor"]))
             return

@@ -19,17 +19,25 @@ def make_grove(cfg: Config) -> Grove:
                  host_label=os.uname().nodename)
 
 
+HEARTBEAT_S = 30
+
+
 def stream_events(state: Path, since: int | None, follow: bool, out=sys.stdout,
-                  sleep=time.sleep, max_polls: int | None = None) -> int:
+                  sleep=time.sleep, max_polls: int | None = None, clock=time.time) -> int:
     newest = last_seq(state)
     cursor = newest if since is None else (0 if since > newest else since)
     out.write(json.dumps({"cursor": cursor}) + "\n")
     out.flush()
-    polls = 0
+    polls, last_output = 0, clock()
     while True:
         for event in read_events(state, cursor):
             out.write(json.dumps(event) + "\n")
             cursor = event["seq"]
+            last_output = clock()
+        if follow and clock() - last_output >= HEARTBEAT_S:
+            # a write to a dead ssh pipe fails, so an orphaned follower exits within 30 s
+            last_output = clock()
+            out.write(json.dumps({"heartbeat": last_output}) + "\n")
         out.flush()
         if not follow or (max_polls is not None and polls >= max_polls):
             return 0

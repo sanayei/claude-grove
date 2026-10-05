@@ -78,7 +78,8 @@ def test_second_claude_in_same_folder_warns(grove):
 def test_claude_command():
     g = Grove.__new__(Grove)
     g.claude_cmd = ["claude"]
-    assert g.claude_command(["--resume"], rc=True) == ["claude", "--remote-control", "--resume"]
+    assert g.claude_command(["--resume"], rc=True) == ["claude", "--resume", "--remote-control"]
+    assert g.claude_command(["--model", "x"], rc=True)[-1] == "--remote-control"
     assert g.claude_command([], rc=False) == ["claude"]
 
 
