@@ -1,6 +1,7 @@
 """Interactive screen. Model and key mapping are pure; curses glue is thin."""
 from __future__ import annotations
 
+import contextlib
 import curses
 import time
 from dataclasses import dataclass, field
@@ -65,7 +66,7 @@ def action_for(key: str, row: Row | None) -> tuple:
     if key == "/":
         return ("search",)
     if row is None:
-        return ("none",)
+        return {"n": ("new", ""), "m": ("mark", "")}.get(key, ("none",))
     if key in ("\n", "KEY_ENTER", "KEY_RIGHT"):
         return ("open", row.ws_path, row.tab_id)
     if key in (" ", "KEY_LEFT") and row.kind == "ws":
@@ -83,6 +84,16 @@ def action_for(key: str, row: Row | None) -> tuple:
 
 # ---- curses glue (manual testing only) -----------------------------------
 
+@contextlib.contextmanager
+def _blocking(screen):
+    """Block indefinitely on input; restore the refresh timeout afterwards."""
+    screen.timeout(-1)
+    try:
+        yield
+    finally:
+        screen.timeout(int(REFRESH_S * 1000))
+
+
 def _prompt(screen, text: str, default: str = "") -> str | None:
     h, w = screen.getmaxyx()
     curses.echo()
@@ -92,7 +103,8 @@ def _prompt(screen, text: str, default: str = "") -> str | None:
     screen.addnstr(h - 1, 0, f"{text} [{default}]: " if default else f"{text}: ", w - 1)
     screen.refresh()
     try:
-        value = screen.getstr().decode("utf-8", "replace").strip()
+        with _blocking(screen):
+            value = screen.getstr().decode("utf-8", "replace").strip()
     except KeyboardInterrupt:
         value = None
     finally:
@@ -105,6 +117,11 @@ def _prompt(screen, text: str, default: str = "") -> str | None:
 
 def _pick_folder(screen, backend, start: str) -> str | None:
     """Browse folders: ⏎ enter, ⌫ up, '.' choose current, q cancel."""
+    with _blocking(screen):
+        return _pick_folder_blocking(screen, backend, start)
+
+
+def _pick_folder_blocking(screen, backend, start: str) -> str | None:
     path, cursor = start, 0
     while True:
         dirs = backend.request("ls", {"path": path})["dirs"]
@@ -114,7 +131,10 @@ def _pick_folder(screen, backend, start: str) -> str | None:
         screen.addnstr(1, 0, "⏎ open  ⌫ up  . choose this folder  q cancel", w - 1, curses.A_DIM)
         for i, name in enumerate(dirs[: h - 3]):
             screen.addnstr(i + 2, 2, name + "/", w - 3, curses.A_REVERSE if i == cursor else 0)
-        key = screen.getkey()
+        try:
+            key = screen.getkey()
+        except KeyboardInterrupt:
+            return None
         if key in ("q", "\x1b"):
             return None
         if key == "." and path:
@@ -169,6 +189,8 @@ def _loop(screen, backend, cfg) -> int:
             key = screen.getkey()
         except curses.error:
             continue                                    # timeout: refresh
+        except KeyboardInterrupt:
+            return 0
         model.message = ""
         action = action_for(key, model.selected())
         try:
@@ -185,17 +207,24 @@ def _loop(screen, backend, cfg) -> int:
                 reply = backend.request("resolve", {"num": int(action[2][1:])} if action[2]
                                         else {"path": action[1]})
                 curses.endwin()
-                open_session(backend, cfg, reply["session"], reply["window_id"], replace=False)
+                try:
+                    code = open_session(backend, cfg, reply["session"], reply["window_id"], replace=False)
+                except OSError as exc:
+                    code, model.message = 0, f"error: {exc}"
                 screen.refresh()
+                if code:
+                    model.message = f"could not open session (exit {code})"
                 last = 0.0
             elif action[0] == "new":
                 folder = _pick_folder(screen, backend, action[1])
                 if folder:
-                    label = _prompt(screen, "label (optional)") or ""
-                    kind = "shell" if (_prompt(screen, "claude or shell", "claude") or "").startswith("s") else "claude"
-                    reply = backend.request("new", {"path": folder, "label": label, "kind": kind})
-                    model.message = reply["warning"] or f"created tab #{reply['window_id'][1:]}"
-                    last = 0.0
+                    label = _prompt(screen, "label (optional)")
+                    kind_in = _prompt(screen, "claude or shell", "claude") if label is not None else None
+                    if kind_in is not None:
+                        kind = "shell" if kind_in.startswith("s") else "claude"
+                        reply = backend.request("new", {"path": folder, "label": label, "kind": kind})
+                        model.message = reply.get("warning") or f"created tab #{reply['window_id'][1:]}"
+                        last = 0.0
             elif action[0] == "rename":
                 label = _prompt(screen, "new label")
                 if label is not None:

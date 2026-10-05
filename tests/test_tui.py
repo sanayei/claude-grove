@@ -30,8 +30,12 @@ def test_model_keeps_selection_on_refresh():
     m = Model()
     m.set_tree(TREE)
     m.cursor = [r.tab_id for r in m.rows()].index("@21")
-    m.set_tree(TREE)
+    bigger = dict(TREE, workspaces=[
+        w if w["path"] != "pub" else dict(w, tabs=[w["tabs"][0], dict(w["tabs"][0], id="@31", num=31)] + w["tabs"][1:])
+        for w in TREE["workspaces"]])
+    m.set_tree(bigger)
     assert m.selected().tab_id == "@21"
+    assert m.cursor == [r.tab_id for r in m.rows()].index("@21")
 
 
 def test_needs_input_count():
@@ -54,3 +58,6 @@ def test_action_for():
     assert action_for("c", TAB) == ("close", "@12")
     assert action_for("/", None) == ("search",)
     assert action_for("\n", None) == ("none",)
+    assert action_for("n", None) == ("new", "")
+    assert action_for("m", None) == ("mark", "")
+    assert action_for("c", None) == ("none",)
