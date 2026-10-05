@@ -1,0 +1,84 @@
+"""Backends used by the CLI/TUI: in-process (local) or over ssh (remote)."""
+from __future__ import annotations
+
+import json
+import shlex
+import subprocess
+from pathlib import Path
+
+from .config import Config
+from .ops import Grove, NeedsConfirm, dispatch
+
+
+class RemoteError(RuntimeError):
+    pass
+
+
+def parse_reply(code: int, stdout: str, stderr: str, host: str) -> dict:
+    if code == 255:
+        detail = stderr.strip().splitlines()[-1] if stderr.strip() else "ssh failed"
+        detail = detail.split(": ")[-1] if detail.startswith("ssh:") else detail
+        raise RemoteError(f"cannot reach {host}: {detail}")
+    lines = stdout.strip().splitlines()
+    try:
+        reply = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        reply = None
+    if not isinstance(reply, dict):
+        shown = (stderr.strip() or stdout.strip() or "no output")[:200]
+        raise RemoteError(f"unexpected reply from {host}: {shown} — is grove installed there? "
+                          "(run: grove doctor)")
+    if "error" in reply:
+        raise (NeedsConfirm if reply.get("confirm") else RemoteError)(reply["error"])
+    return reply["ok"]
+
+
+class LocalBackend:
+    def __init__(self, grove: Grove, launcher: str):
+        self.grove = grove
+        self.launcher = launcher
+
+    def request(self, op: str, params: dict) -> dict:
+        return dispatch(self.grove, op, params)
+
+    def stream_argv(self, since: int | None) -> list[str]:
+        return [self.launcher, "--remote", "events", json.dumps({"since": since, "follow": True})]
+
+
+class RemoteBackend:
+    def __init__(self, cfg: Config, state: Path, run=subprocess.run):
+        self.cfg = cfg
+        self.state = state
+        self.run = run
+
+    def ssh_argv(self, tty: bool = False) -> list[str]:
+        return ["ssh", "-o", "ControlMaster=auto", "-o", f"ControlPath={self.state}/ssh-%C",
+                "-o", "ControlPersist=10m", "-o", "ConnectTimeout=5",
+                "-o", "ServerAliveInterval=15", *self.cfg.ssh_opts, *(["-t"] if tty else [])]
+
+    def _remote_command(self, op: str, params: dict) -> str:
+        # remote_cmd stays unquoted so the remote shell expands "~"
+        return " ".join([self.cfg.remote_cmd, "--remote", shlex.quote(op), shlex.quote(json.dumps(params))])
+
+    def request(self, op: str, params: dict) -> dict:
+        argv = [*self.ssh_argv(), "--", self.cfg.host, self._remote_command(op, params)]
+        try:
+            proc = self.run(argv, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired as exc:
+            raise RemoteError(f"{self.cfg.host} did not answer within 60 s") from exc
+        return parse_reply(proc.returncode, proc.stdout, proc.stderr, self.cfg.host)
+
+    def stream_argv(self, since: int | None) -> list[str]:
+        return [*self.ssh_argv(), "--", self.cfg.host,
+                self._remote_command("events", {"since": since, "follow": True})]
+
+
+def attach_argv(cfg: Config, backend, session: str, window_id: str | None,
+                iterm: bool, inside_tmux: bool) -> list[str]:
+    target = shlex.quote(f"={session}")
+    select = f"tmux select-window -t {shlex.quote(window_id)} 2>/dev/null; " if window_id else ""
+    if cfg.is_local:
+        verb = f"switch-client -t {target}" if inside_tmux else f"{'-CC ' if iterm else ''}attach -t {target}"
+        return ["sh", "-c", f"{select}exec tmux {verb}"]
+    return [*backend.ssh_argv(tty=True), "--", cfg.host,
+            f"{select}exec tmux {'-CC ' if iterm else ''}attach -t {target}"]
