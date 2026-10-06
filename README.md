@@ -76,12 +76,12 @@ Keys in the interactive screen:
 | `↑` `↓` (or `k` `j`) | Move |
 | `⏎` (or `→`) | Open the tab or workspace |
 | `space` (or `←`) | Fold/unfold a workspace |
-| `n` | New tab: pick a folder, then label and claude/shell |
+| `n` | New tab: pick a folder (`⏎` go in, `.` choose it), then label and claude/shell; the tab opens |
 | `r` | Rename the selected tab |
 | `m` | Mark a folder as a workspace (folder picker) |
 | `c` | Close the selected tab |
-| `/` | Filter by text |
-| `q` | Quit |
+| `/` | Filter by text; `esc` clears the filter |
+| `q` (or `esc` with no filter) | Quit |
 
 Close the laptop any time. Claude keeps running on the remote; run `grove` again from either Mac and everything is still there.
 
