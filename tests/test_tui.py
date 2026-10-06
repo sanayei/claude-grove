@@ -61,3 +61,10 @@ def test_action_for():
     assert action_for("n", None) == ("new", "")
     assert action_for("m", None) == ("mark", "")
     assert action_for("c", None) == ("none",)
+
+
+def test_escape_clears_an_active_search_before_quitting():
+    assert action_for("\x1b", TAB, filtering=True) == ("clear",)
+    assert action_for("\x1b", None, filtering=True) == ("clear",)
+    assert action_for("\x1b", TAB) == ("quit",)
+    assert action_for("q", TAB, filtering=True) == ("quit",)

@@ -13,6 +13,7 @@ from .workspaces import PathError
 
 REFRESH_S = 2.0
 HELP = "↑↓ move  ⏎ open  space fold  n new  r rename  m mark  c close  / search  q quit"
+SEARCH_HELP = "esc clear search  " + HELP
 
 
 @dataclass
@@ -56,7 +57,9 @@ class Model:
         self.move(0)
 
 
-def action_for(key: str, row: Row | None) -> tuple:
+def action_for(key: str, row: Row | None, filtering: bool = False) -> tuple:
+    if key == "\x1b" and filtering:
+        return ("clear",)
     if key in ("q", "\x1b"):
         return ("quit",)
     if key in ("KEY_UP", "k"):
@@ -110,7 +113,7 @@ def _prompt(screen, text: str, default: str = "") -> str | None:
     finally:
         curses.noecho()
         curses.curs_set(0)
-    if value is None:
+    if value is None or "\x1b" in value:
         return None
     return value or default
 
@@ -166,13 +169,25 @@ def _draw(screen, model: Model, host: str) -> None:
         if row.status.startswith("◆"):
             attr |= curses.A_BOLD
         screen.addnstr(i + 2, 0, line, w - 1, attr)
-    footer = model.message or (f"/{model.query}  " if model.query else "") + HELP
+    footer = model.message or (f"/{model.query}  {SEARCH_HELP}" if model.query else HELP)
     screen.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
     screen.refresh()
 
 
-def _loop(screen, backend, cfg) -> int:
+def _open(screen, backend, cfg, model: Model, reply: dict) -> None:
+    """Attach to reply's session/window; come back to the screen when it detaches."""
     from .cli import open_session
+    curses.endwin()
+    try:
+        code = open_session(backend, cfg, reply["session"], reply["window_id"], replace=False)
+    except OSError as exc:
+        code, model.message = 0, f"error: {exc}"
+    screen.refresh()
+    if code:
+        model.message = f"could not open session (exit {code})"
+
+
+def _loop(screen, backend, cfg) -> int:
     curses.curs_set(0)
     screen.timeout(int(REFRESH_S * 1000))
     model, last = Model(), 0.0
@@ -192,7 +207,7 @@ def _loop(screen, backend, cfg) -> int:
         except KeyboardInterrupt:
             return 0
         model.message = ""
-        action = action_for(key, model.selected())
+        action = action_for(key, model.selected(), filtering=bool(model.query))
         try:
             if action[0] == "quit":
                 return 0
@@ -200,20 +215,15 @@ def _loop(screen, backend, cfg) -> int:
                 model.move(action[1])
             elif action[0] == "toggle":
                 model.toggle()
+            elif action[0] == "clear":
+                model.query, model.cursor = "", 0
             elif action[0] == "search":
                 model.query = _prompt(screen, "search") or ""
                 model.cursor = 0
             elif action[0] == "open":
                 reply = backend.request("resolve", {"num": int(action[2][1:])} if action[2]
                                         else {"path": action[1]})
-                curses.endwin()
-                try:
-                    code = open_session(backend, cfg, reply["session"], reply["window_id"], replace=False)
-                except OSError as exc:
-                    code, model.message = 0, f"error: {exc}"
-                screen.refresh()
-                if code:
-                    model.message = f"could not open session (exit {code})"
+                _open(screen, backend, cfg, model, reply)
                 last = 0.0
             elif action[0] == "new":
                 folder = _pick_folder(screen, backend, action[1])
@@ -223,7 +233,9 @@ def _loop(screen, backend, cfg) -> int:
                     if kind_in is not None:
                         kind = "shell" if kind_in.startswith("s") else "claude"
                         reply = backend.request("new", {"path": folder, "label": label, "kind": kind})
-                        model.message = reply.get("warning") or f"created tab #{reply['window_id'][1:]}"
+                        _open(screen, backend, cfg, model, reply)
+                        model.message = model.message or reply.get("warning") \
+                            or f"created tab #{reply['window_id'][1:]}"
                         last = 0.0
             elif action[0] == "rename":
                 label = _prompt(screen, "new label")
