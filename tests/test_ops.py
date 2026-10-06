@@ -2,7 +2,7 @@ import shutil
 
 import pytest
 
-from grove_core.ops import Grove, NeedsConfirm, OpError, dispatch
+from grove_core.ops import claude_name, Grove, NeedsConfirm, OpError, dispatch
 from grove_core.status import read_status, write_status
 from grove_core.workspaces import PathError
 from tests.test_tmux import wait_for
@@ -20,7 +20,7 @@ def root(tmp_path):
 @pytest.fixture
 def grove(tmux, root, tmp_path):
     return Grove(root, tmux, tmp_path / "state", clock=lambda: 1000.0,
-                 host_label="test", claude_cmd=["sleep", "30"])
+                 host_label="test", claude_cmd=["sh", "-c", "exec sleep 30", "claude"])
 
 
 def tabs_of(tree, path):
@@ -81,6 +81,22 @@ def test_claude_command():
     assert g.claude_command(["--resume"], rc=True) == ["claude", "--resume", "--remote-control"]
     assert g.claude_command(["--model", "x"], rc=True)[-1] == "--remote-control"
     assert g.claude_command([], rc=False) == ["claude"]
+
+
+def test_claude_command_names_the_session():
+    g = Grove.__new__(Grove)
+    g.claude_cmd = ["claude"]
+    assert g.claude_command([], rc=False, name="pubs/p3 · draft") == ["claude", "--name", "pubs/p3 · draft"]
+    assert g.claude_command(["--resume"], rc=True, name="x") == \
+        ["claude", "--name", "x", "--resume", "--remote-control"]
+    # a name the user passed to claude wins
+    assert g.claude_command(["-n", "mine"], rc=False, name="x") == ["claude", "-n", "mine"]
+    assert g.claude_command(["--name=mine"], rc=False, name="x") == ["claude", "--name=mine"]
+
+
+def test_claude_name():
+    assert claude_name("publications/p3", "draft") == "publications/p3 · draft"
+    assert claude_name("trading", "") == "trading"
 
 
 def test_rename(grove):

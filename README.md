@@ -67,6 +67,8 @@ grove doctor
 | `grove watch` | Mac notifier (started at login by setup) |
 | `grove setup` / `grove doctor` | Configure / check everything |
 
+Each Claude is started with `--name <folder> · <label>` (e.g. `publications/p3 · draft`), so it is easy to find in Remote Control on claude.ai or the Claude app, and in `/resume`; a `--name` you pass after `--` wins. Renaming a grove tab does not rename the Claude session; use Claude's `/rename` for that.
+
 Paths are relative to the root. On the remote itself, `.` and absolute paths also work. After a remote reboot, tabs are gone; resume with `grove new <folder> -- --resume`.
 
 Keys in the interactive screen:

@@ -20,6 +20,11 @@ SAME_FOLDER_WARNING = ("{n} other Claude tab(s) already run in this folder; para
                        "overwrite each other — consider a git worktree.")
 
 
+def claude_name(folder_rel: str, label: str) -> str:
+    """Claude's session name (Remote Control, /resume): the folder plus the tab label."""
+    return f"{folder_rel} · {label}" if label else folder_rel
+
+
 class OpError(Exception):
     pass
 
@@ -99,9 +104,12 @@ class Grove:
             self.tmux.set_title(wid, tab_name("", "shell"))
         return name
 
-    def claude_command(self, args: list[str], rc: bool) -> list[str]:
+    def claude_command(self, args: list[str], rc: bool, name: str = "") -> list[str]:
+        # a name the user passed to claude wins over ours
+        named = any(a in ("-n", "--name") or a.startswith("--name=") for a in args)
         # --remote-control takes an optional value, so it must come last
-        return [*self.claude_cmd, *args, *(["--remote-control"] if rc else [])]
+        return [*self.claude_cmd, *(["--name", name] if name and not named else []), *args,
+                *(["--remote-control"] if rc else [])]
 
     def _window(self, num: int) -> Window:
         for w in self.tmux.windows():
@@ -128,7 +136,8 @@ class Grove:
         self.tmux.set_title(wid, tab_name(dir_rel, label))
         if kind == "claude":
             write_status(self.state, wid, "idle", "created", self.clock())
-            self.tmux.send_line(wid, shlex.join(self.claude_command(list(claude_args), rc)))
+            name = claude_name(rel(self.root, folder), label)
+            self.tmux.send_line(wid, shlex.join(self.claude_command(list(claude_args), rc, name)))
         return {"session": session, "window_id": wid, "warning": warning}
 
     def rename(self, num: int, label: str) -> dict:
