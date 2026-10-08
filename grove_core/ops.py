@@ -88,6 +88,19 @@ class Grove:
         dirs = sorted(p.name for p in folder.iterdir() if p.is_dir() and not p.name.startswith("."))
         return {"path": path, "dirs": dirs}
 
+    def mkdir(self, path: str, name: str) -> dict:
+        """Create folder `name` in `path` ("" = the root, which makes it a workspace)."""
+        name = name.strip()
+        if not name or name in (".", "..") or "/" in name or name.startswith("."):
+            raise PathError(f"{name!r} is not a usable folder name")
+        parent = resolve_in_root(self.root, path) if path else self.root
+        try:
+            (parent / name).mkdir()
+        except FileExistsError:
+            raise PathError(f"{name!r} already exists in {path or 'the root'}") from None
+        self._invalidate()
+        return {"path": f"{path}/{name}" if path else name}
+
     # ---- sessions and tabs ------------------------------------------------
     def ensure_session(self, ws_rel: str) -> str:
         name = session_name(ws_rel)
@@ -195,6 +208,8 @@ def dispatch(g: Grove, op: str, p: dict) -> dict:
         return g.resolve(p.get("path"), p.get("num"))
     if op == "ls":
         return g.listdir(p.get("path", ""))
+    if op == "mkdir":
+        return g.mkdir(p.get("path", ""), p["name"])
     if op == "ping":
         from .hooks import hooks_installed, settings_path
         return {"version": __version__, "tmux": g.tmux.version(),

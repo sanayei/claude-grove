@@ -78,9 +78,9 @@ Keys in the interactive screen:
 | `↑` `↓` (or `k` `j`) | Move |
 | `⏎` (or `→`) | Open the tab or workspace |
 | `space` (or `←`) | Fold/unfold a workspace |
-| `n` | New tab: pick a folder (`⏎` go in, `.` choose it), then label and claude/shell; the tab opens |
+| `n` | New tab: pick a folder (`⏎` go in, `.` choose it, `+` create a folder here), then label and claude/shell; the tab opens |
 | `r` | Rename the selected tab |
-| `m` | Mark a folder as a workspace (folder picker) |
+| `m` | Mark a folder as a workspace (folder picker; `+` creates a folder) |
 | `c` | Close the selected tab |
 | `/` | Filter by text; `esc` clears the filter |
 | `q` (or `esc` with no filter) | Quit |
@@ -89,7 +89,7 @@ Close the laptop any time. Claude keeps running on the remote; run `grove` again
 
 ## Workspaces
 
-Every top-level folder under the root is a workspace automatically. To make any deeper folder a workspace, run `grove mark <folder>` (it creates a `.grove` file; `grove unmark` removes it).
+Every top-level folder under the root is a workspace automatically, including one you create with `+` in the folder picker at `(root)`. To make any deeper folder a workspace, run `grove mark <folder>` (it creates a `.grove` file; `grove unmark` removes it).
 
 A tab belongs to the **nearest** workspace above its folder, like git finding `.git`. With `publications` as a top-level workspace:
 

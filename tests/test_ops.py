@@ -157,6 +157,42 @@ def test_listdir(grove):
     assert grove.listdir("trading")["dirs"] == ["it's ö", "src"]
 
 
+@pytest.fixture
+def offline(root, tmp_path):
+    """A Grove for folder operations; tmux is never touched."""
+    return Grove(root, None, tmp_path / "state")
+
+
+def test_mkdir_at_root_becomes_a_workspace(offline, root):
+    assert "notes" not in offline.workspaces()
+    assert offline.mkdir("", "notes") == {"path": "notes"}
+    assert (root / "notes").is_dir()
+    assert "notes" in offline.workspaces()
+
+
+def test_mkdir_inside_a_folder(offline, root):
+    assert offline.mkdir("trading", " new one ") == {"path": "trading/new one"}
+    assert (root / "trading/new one").is_dir()
+
+
+@pytest.mark.parametrize("name", ["", "  ", ".", "..", "a/b", ".hidden"])
+def test_mkdir_rejects_bad_names(offline, name):
+    with pytest.raises(PathError):
+        offline.mkdir("", name)
+
+
+def test_mkdir_refuses_existing_and_outside_root(offline):
+    with pytest.raises(PathError):
+        offline.mkdir("", "trading")
+    with pytest.raises(PathError):
+        offline.mkdir("..", "escape")
+
+
+def test_dispatch_mkdir(offline, root):
+    assert dispatch(offline, "mkdir", {"path": "trading", "name": "z"}) == {"path": "trading/z"}
+    assert (root / "trading/z").is_dir()
+
+
 def test_dispatch(grove):
     assert dispatch(grove, "ls", {"path": "trading"})["dirs"] == ["it's ö", "src"]
     reply = dispatch(grove, "new", {"path": "trading/src", "label": "x", "kind": "shell"})
