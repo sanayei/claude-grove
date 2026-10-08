@@ -68,3 +68,49 @@ def test_escape_clears_an_active_search_before_quitting():
     assert action_for("\x1b", None, filtering=True) == ("clear",)
     assert action_for("\x1b", TAB) == ("quit",)
     assert action_for("q", TAB, filtering=True) == ("quit",)
+
+
+class FakeScreen:
+    def __init__(self, keys):
+        self.keys, self.lines = list(keys), []
+
+    def getkey(self):
+        return self.keys.pop(0)
+
+    def getmaxyx(self):
+        return 24, 80
+
+    def addnstr(self, y, x, text, n, attr=0):
+        self.lines.append(text)
+
+    def erase(self): pass
+    def timeout(self, ms): pass
+
+
+def test_picker_creates_a_folder_at_the_root_and_chooses_it(tmp_path, monkeypatch):
+    from grove_core import tui
+    from grove_core.client import LocalBackend
+    from grove_core.ops import Grove
+
+    root = tmp_path / "projects"
+    (root / "trading").mkdir(parents=True)
+    backend = LocalBackend(Grove(root, None, tmp_path / "state"), "grove")
+    monkeypatch.setattr(tui, "_prompt", lambda screen, text, default="": "notes")
+    # "+" creates notes/ and selects it; "\n" goes in; "." chooses it
+    screen = FakeScreen(["+", "\n", "."])
+    assert tui._pick_folder_blocking(screen, backend, "") == "notes"
+    assert (root / "notes").is_dir()
+
+
+def test_picker_shows_mkdir_errors_and_keeps_browsing(tmp_path, monkeypatch):
+    from grove_core import tui
+    from grove_core.client import LocalBackend
+    from grove_core.ops import Grove
+
+    root = tmp_path / "projects"
+    (root / "trading").mkdir(parents=True)
+    backend = LocalBackend(Grove(root, None, tmp_path / "state"), "grove")
+    monkeypatch.setattr(tui, "_prompt", lambda screen, text, default="": "trading")
+    screen = FakeScreen(["+", "q"])
+    assert tui._pick_folder_blocking(screen, backend, "") is None
+    assert any("already exists" in line for line in screen.lines)

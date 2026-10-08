@@ -119,21 +119,26 @@ def _prompt(screen, text: str, default: str = "") -> str | None:
 
 
 def _pick_folder(screen, backend, start: str) -> str | None:
-    """Browse folders: ⏎ enter, ⌫ up, '.' choose current, q cancel."""
+    """Browse folders: ⏎ enter, ⌫ up, '.' choose current, + new folder, q cancel."""
     with _blocking(screen):
         return _pick_folder_blocking(screen, backend, start)
 
 
 def _pick_folder_blocking(screen, backend, start: str) -> str | None:
-    path, cursor = start, 0
+    path, cursor, message, select = start, 0, "", ""
     while True:
         dirs = backend.request("ls", {"path": path})["dirs"]
+        if select in dirs:
+            cursor, select = dirs.index(select), ""
         screen.erase()
         h, w = screen.getmaxyx()
         screen.addnstr(0, 0, f"Choose a folder: {path or '(root)'}", w - 1, curses.A_BOLD)
-        screen.addnstr(1, 0, "⏎ open  ⌫ up  . choose this folder  q cancel", w - 1, curses.A_DIM)
-        for i, name in enumerate(dirs[: h - 3]):
+        screen.addnstr(1, 0, "⏎ open  ⌫ up  . choose this folder  + new folder  q cancel", w - 1, curses.A_DIM)
+        for i, name in enumerate(dirs[: h - 4]):
             screen.addnstr(i + 2, 2, name + "/", w - 3, curses.A_REVERSE if i == cursor else 0)
+        if message:
+            screen.addnstr(h - 1, 0, message, w - 1, curses.A_DIM)
+        message = ""
         try:
             key = screen.getkey()
         except KeyboardInterrupt:
@@ -150,6 +155,17 @@ def _pick_folder_blocking(screen, backend, start: str) -> str | None:
             path, cursor = (f"{path}/{dirs[cursor]}" if path else dirs[cursor]), 0
         elif key in ("KEY_BACKSPACE", "\x7f", "KEY_LEFT"):
             path, cursor = path.rpartition("/")[0], 0
+        elif key == "+":
+            name = _prompt(screen, f"new folder in {path or '(root)'}")
+            screen.timeout(-1)                          # _prompt restored the refresh timeout
+            if name:
+                try:
+                    created = backend.request("mkdir", {"path": path, "name": name})["path"]
+                except (RemoteError, PathError) as exc:
+                    message = f"error: {exc}"
+                else:
+                    select = created.rpartition("/")[2]
+                    message = f"created {created}/ — ⏎ to go in, then . to choose it"
 
 
 def _draw(screen, model: Model, host: str) -> None:
